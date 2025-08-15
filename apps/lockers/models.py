@@ -105,10 +105,11 @@ class Locker(models.Model):
         self.released_date = None
         self.save()
         
-        # 학생 모델의 사물함 번호도 업데이트
+        # 학생 모델의 사물함 번호도 업데이트 (무한 루프 방지)
         if student.locker_number != self.number:
-            student.locker_number = self.number
-            student.save(update_fields=['locker_number'])
+            # update() 사용으로 무한 루프 방지
+            from apps.students.models import Student
+            Student.objects.filter(id=student.id).update(locker_number=self.number)
     
     def release(self):
         """

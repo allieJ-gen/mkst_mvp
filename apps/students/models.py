@@ -103,6 +103,7 @@ class Student(models.Model):
         User, 
         on_delete=models.SET_NULL, 
         null=True,
+        blank=True,  # 폼에서 필수가 아님
         related_name='created_students',
         verbose_name="생성자"
     )
@@ -110,6 +111,7 @@ class Student(models.Model):
         User, 
         on_delete=models.SET_NULL, 
         null=True,
+        blank=True,  # 폼에서 필수가 아님
         related_name='updated_students',
         verbose_name="수정자"
     )
@@ -157,22 +159,31 @@ class Student(models.Model):
     
     def save(self, *args, **kwargs):
         """저장 시 추가 로직"""
+        # 동명이인 구분을 위한 이름 자동 처리
+        if not self.pk:  # 새로운 학생인 경우에만
+            self.name = Student._generate_unique_name(self.name)
+        
+        # 학교명 자동 정규화
+        if self.school:
+            self.school = Student._normalize_school_name(self.school)
+        
         # 등원번호가 없으면 자동 생성
         if not self.attendance_number and self.parent_phone:
             self.attendance_number = self.generate_attendance_number(self.parent_phone)
         
-        # 사물함이 없으면 자동 배정
+        # 먼저 학생 정보 저장
+        super().save(*args, **kwargs)
+        
+        # 저장 후 사물함 할당 처리
         if not self.locker_number and self.status == 'active':
-            self.assign_locker()
+            self._assign_locker_after_save()
         
         # 퇴원생으로 변경시 사물함 해제
         if self.status != 'active' and self.locker_number:
             try:
-                self.release_locker()
+                self._release_locker_after_save()
             except Exception:
                 pass  # 사물함 해제 실패시 무시
-        
-        super().save(*args, **kwargs)
     
     @classmethod
     def generate_attendance_number(cls, parent_phone):
@@ -223,11 +234,116 @@ class Student(models.Model):
         available_locker = Locker.objects.filter(is_occupied=False).first()
         if available_locker:
             self.locker_number = available_locker.number
-            available_locker.assign_to_student(self)
-            self.save()
+            # 사물함 할당은 save() 후에 처리하도록 수정
             return self.locker_number
         
         raise Exception("사용 가능한 사물함이 없습니다.")
+    
+    @classmethod
+    def _generate_unique_name(cls, base_name):
+        """
+        동명이인 구분을 위한 고유 이름 생성
+        형식: 김철수 → 김철수a → 김철수b → 김철수c...
+        사용중이지 않은 영소문자를 우선적으로 재사용
+        """
+        if not base_name:
+            return base_name
+        
+        # 기본 이름이 이미 존재하는지 확인
+        if not cls.objects.filter(name=base_name).exists():
+            # 동명이인이 없으면 원래 이름 그대로 반환
+            return base_name
+        
+        # 동명이인이 있는 경우 사용중이지 않은 영소문자 찾기
+        used_suffixes = set()
+        
+        # 현재 사용중인 모든 영소문자 접미사 수집
+        for student in cls.objects.filter(name__startswith=base_name):
+            if student.name != base_name:  # 기본 이름 제외
+                # 영소문자 접미사 추출 (김엄마a → a)
+                suffix = student.name[len(base_name):]
+                if suffix and suffix[0].islower() and suffix[0].isalpha():
+                    used_suffixes.add(suffix[0])
+        
+        # 사용중이지 않은 영소문자 찾기 (a부터 순서대로)
+        for i in range(26):
+            suffix = chr(ord('a') + i)
+            if suffix not in used_suffixes:
+                return f"{base_name}{suffix}"
+        
+        # a~z가 모두 사용중인 경우 숫자 추가 (김엄마a1, 김엄마a2...)
+        counter = 1
+        while True:
+            for i in range(26):
+                suffix = chr(ord('a') + i)
+                candidate_name = f"{base_name}{suffix}{counter}"
+                if not cls.objects.filter(name=candidate_name).exists():
+                    return candidate_name
+            counter += 1
+
+    @classmethod
+    def _normalize_school_name(cls, school_name):
+        """
+        학교명 자동 정규화
+        규칙:
+        1. "서현" → "서현고" (고 접미어 자동 추가)
+        2. "서현고등학교" → "서현고" (등학교 접미어 자동 삭제)
+        3. "서현고" → "서현고" (그대로 유지)
+        """
+        if not school_name:
+            return school_name
+        
+        # 공백 제거 및 앞뒤 공백 정리
+        school_name = school_name.strip()
+        
+        # "고등학교" 접미어 제거
+        if school_name.endswith('고등학교'):
+            school_name = school_name[:-4]  # "고등학교" 4글자 제거
+        
+        # "중학교" 접미어 제거
+        elif school_name.endswith('중학교'):
+            school_name = school_name[:-3]  # "중학교" 3글자 제거
+        
+        # "초등학교" 접미어 제거
+        elif school_name.endswith('초등학교'):
+            school_name = school_name[:-4]  # "초등학교" 4글자 제거
+        
+        # "고" 접미어가 없으면 자동 추가
+        if not school_name.endswith('고') and not school_name.endswith('중') and not school_name.endswith('초'):
+            # 특수한 경우 제외 (예: "대학교", "전문학교" 등)
+            if not any(school_name.endswith(suffix) for suffix in ['대학교', '전문학교', '고등학교', '중학교', '초등학교']):
+                school_name += '고'
+        
+        return school_name
+    
+    def _assign_locker_after_save(self):
+        """저장 후 사물함 할당 처리"""
+        from apps.lockers.models import Locker
+        
+        # 사물함이 이미 할당된 경우
+        if self.locker_number:
+            try:
+                available_locker = Locker.objects.get(number=self.locker_number)
+                available_locker.assign_to_student(self)
+            except Locker.DoesNotExist:
+                pass
+        # 사물함이 할당되지 않은 경우 자동 할당
+        else:
+            try:
+                # 사용 가능한 사물함을 랜덤으로 선택
+                available_lockers = list(Locker.objects.filter(is_occupied=False))
+                if available_lockers:
+                    # 랜덤 선택
+                    import random
+                    selected_locker = random.choice(available_lockers)
+                    self.locker_number = selected_locker.number
+                    # 사물함 할당
+                    selected_locker.assign_to_student(self)
+                    # 학생 정보 업데이트 (무한 루프 방지)
+                    Student.objects.filter(id=self.id).update(locker_number=self.locker_number)
+            except Exception as e:
+                print(f"사물함 자동 할당 실패: {e}")
+                pass
     
     def release_locker(self):
         """사물함 해제"""
@@ -244,6 +360,19 @@ class Student(models.Model):
                 pass
         
         raise Exception("해제할 사물함이 없습니다.")
+    
+    def _release_locker_after_save(self):
+        """저장 후 사물함 해제 처리"""
+        if self.locker_number:
+            from apps.lockers.models import Locker
+            try:
+                locker = Locker.objects.get(number=self.locker_number)
+                locker.release()
+                self.locker_number = None
+                # 무한 루프 방지를 위해 update() 사용
+                Student.objects.filter(id=self.id).update(locker_number=None)
+            except Locker.DoesNotExist:
+                pass
     
     def auto_grade_update(self):
         """

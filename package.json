@@ -1,0 +1,17 @@
+{
+  "name": "mkst_mvp",
+  "version": "1.0.0",
+  "description": "김엄마 관리형 독서실 학생 회원 관리 시스템",
+  "scripts": {
+    "dev": "cd frontend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "source mkst_env/bin/activate && python manage.py runserver",
+    "dev:all": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "install:frontend": "cd frontend && npm install",
+    "build:frontend": "cd frontend && npm run build",
+    "start:frontend": "cd frontend && npm run start"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
