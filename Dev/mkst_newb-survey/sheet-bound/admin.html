@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top" />
+    <meta charset="UTF-8" />
+    <style>
+      body { font-family: -apple-system, system-ui, Arial, sans-serif; padding: 16px; }
+      input, textarea, button { font-size: 14px; padding: 8px; }
+      table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+      th, td { border: 1px solid #ddd; padding: 6px; font-size: 13px; vertical-align: top; }
+      th { background: #f6f6f6; }
+      .row { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; }
+    </style>
+  </head>
+  <body>
+    <h2>관리자 뷰어</h2>
+    <div>
+      <input id="q" placeholder="학생 이름 검색..." />
+      <button onclick="search()">검색</button>
+    </div>
+    <div id="result"></div>
+
+    <script>
+      function search() {
+        const name = document.getElementById('q').value.trim();
+        document.getElementById('result').textContent = '검색 중...';
+        google.script.run.withSuccessHandler(renderResults).withFailureHandler(showError).searchByName(name);
+      }
+
+      function renderResults(res) {
+        if (!res || !res.matches || res.matches.length === 0) {
+          document.getElementById('result').textContent = '검색 결과가 없습니다.';
+          return;
+        }
+        const header = res.header;
+        const idxComment = header.indexOf('comment_admin');
+        let html = '';
+        res.matches.forEach(item => {
+          const d = item.data;
+          html += `<div style="border:1px solid #ddd; padding:10px; margin-top:10px;">`;
+          html += `<div><b>${d[header.indexOf('이름')]} (${d[header.indexOf('학교')]})</b> — ${d[header.indexOf('학년')]} / 계열:${d[header.indexOf('계열')]}</div>`;
+          html += `<div class="row">`;
+          html += `<div><table><tbody>`;
+          ['주요과목등급','전체평균','국어_내신','수학_내신','영어_내신','국어_모의','수학_모의','영어_모의','탐구I','탐구I_모의','탐구II','탐구II_모의','기타과목명_모의','기타_모의'].forEach(k => {
+            html += `<tr><th>${k}</th><td>${d[header.indexOf(k)] ?? ''}</td></tr>`;
+          });
+          ['1지망_대학교','1지망_학과','2지망_대학교','2지망_학과','3지망_대학교','3지망_학과'].forEach(k => {
+            html += `<tr><th>${k}</th><td>${d[header.indexOf(k)] ?? ''}</td></tr>`;
+          });
+          // 서술형 4개 항목 추가 표시
+          ['이전공부법','공부법변경이유','김엄마선택이유','김엄마에바라는점'].forEach(k => {
+            html += `<tr><th>${k}</th><td style="white-space:pre-wrap;">${d[header.indexOf(k)] ?? ''}</td></tr>`;
+          });
+          html += `</tbody></table></div>`;
+          const currentComment = d[idxComment] ?? '';
+          html += `<div><label>comment_admin</label><textarea id="c_${item.rowIndex}" rows="12" style="width:100%">${currentComment}</textarea><br/>`;
+          html += `<button onclick="save(${item.rowIndex})">저장</button></div>`;
+          html += `</div></div>`;
+        });
+        document.getElementById('result').innerHTML = html;
+      }
+
+      function save(rowIndex) {
+        const ta = document.getElementById('c_'+rowIndex);
+        const val = ta.value;
+        ta.disabled = true;
+        google.script.run.withSuccessHandler(() => { ta.disabled = false; alert('저장되었습니다.'); }).withFailureHandler((e) => { ta.disabled = false; alert('오류: '+(e && e.message ? e.message : e)); }).saveComment(rowIndex, val);
+      }
+
+      function showError(e) {
+        document.getElementById('result').textContent = '오류: ' + (e && e.message ? e.message : e);
+      }
+    </script>
+  </body>
+  </html>
+
+
